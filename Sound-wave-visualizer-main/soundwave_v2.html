@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Microphone Reactive Waves</title>
+<style>
+    body {
+        margin: 0;
+        overflow: hidden;
+        background: black;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        height: 100vh;
+        color: white;
+        font-family: sans-serif;
+    }
+    #startBtn {
+        padding: 15px 30px;
+        background: #00c8ff;
+        border: none;
+        border-radius: 8px;
+        font-size: 1.2rem;
+        cursor: pointer;
+        position: absolute;
+        z-index: 10;
+    }
+    canvas {
+        position: absolute;
+        inset: 0;
+    }
+</style>
+</head>
+<body>
+
+<button id="startBtn">Start Visualizer</button>
+<canvas id="waveCanvas"></canvas>
+
+<script>
+const startBtn = document.getElementById("startBtn");
+const canvas = document.getElementById("waveCanvas");
+const ctx = canvas.getContext("2d");
+
+function resizeCanvas() {
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+}
+window.addEventListener("resize", resizeCanvas);
+resizeCanvas();
+
+startBtn.addEventListener("click", async () => {
+    startBtn.style.display = "none";   // hide button
+
+    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === "suspended") await audioCtx.resume();
+
+    // Request microphone access
+    let stream;
+    try {
+        stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch (err) {
+        alert("Microphone access was blocked.");
+        console.error(err);
+        return;
+    }
+
+    const source = audioCtx.createMediaStreamSource(stream);
+    const analyser = audioCtx.createAnalyser();
+    analyser.fftSize = 2048;
+
+    const bufferLength = analyser.frequencyBinCount;
+    const dataArray = new Uint8Array(bufferLength);
+
+    source.connect(analyser);
+
+    function animate() {
+        requestAnimationFrame(animate);
+
+        analyser.getByteTimeDomainData(dataArray);
+
+        ctx.fillStyle = "rgba(0, 0, 0, 0.2)";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = "rgb(0, 200, 255)";
+
+        ctx.beginPath();
+        let sliceWidth = canvas.width / bufferLength;
+        let x = 0;
+
+        for (let i = 0; i < bufferLength; i++) {
+            const v = dataArray[i] / 128.0;
+            const y = (v * canvas.height) / 2;
+
+            if (i === 0) ctx.moveTo(x, y);
+            else ctx.lineTo(x, y);
+
+            x += sliceWidth;
+        }
+        ctx.stroke();
+    }
+
+    animate();
+});
+</script>
+
+</body>
+</html>

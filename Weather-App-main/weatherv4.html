@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Interactive Weather Map</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    body { margin:0; font-family:'Segoe UI',sans-serif; background:#eef2ff; }
+    .container { max-width:1300px; margin:auto; padding:20px; }
+    header { background:linear-gradient(135deg,#667eea,#764ba2); color:#fff; padding:25px; border-radius:12px; text-align:center; }
+    #map { height:420px; border-radius:12px; margin-top:15px; }
+    .panel { background:#fff; padding:20px; margin-top:20px; border-radius:14px; box-shadow:0 6px 20px rgba(0,0,0,0.1); }
+    .flex { display:flex; gap:20px; flex-wrap:wrap; }
+    .toggle { cursor:pointer; background:#667eea; padding:6px 14px; color:white; border-radius:8px; display:inline-block; }
+    .icons { font-size:40px; }
+    #settingsPanel { display:none; }
+    #favoritesList div { padding:6px 10px; background:#eef; margin-bottom:5px; border-radius:6px; cursor:pointer; }
+    #alertsBox { padding:10px; background:#fee; border:1px solid #c33; border-radius:8px; display:none; margin-top:15px; }
+  </style>
+</head>
+<body>
+<div class="container">
+  <header>
+    <h1>🌤️ Interactive Weather Map</h1>
+    <p>Click anywhere on the map or search a location</p>
+  </header>
+
+  <div class="panel">
+    <input id="searchBox" type="text" placeholder="Search location..." style="width:100%; padding:10px; border-radius:8px; border:1px solid #ccc;">
+    <div id="autocomplete" style="background:#fff; border-radius:8px; margin-top:5px;"></div>
+  </div>
+
+  <div id="map"></div>
+
+  <div id="alertsBox"></div>
+
+  <div class="panel flex">
+    <div style="flex:1; min-width:250px;">
+      <h2 id="locationName"></h2>
+      <div id="unitToggle" class="toggle">Switch to °F</div>
+      <div id="addFavorite" class="toggle" style="background:#34a853;">Add to Favorites</div>
+      <div id="currentWeather" style="margin-top:20px;"></div>
+    </div>
+    <div style="flex:1; min-width:250px;">
+      <h3>Favorites</h3>
+      <div id="favoritesList"></div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h3>Hourly Forecast</h3>
+    <canvas id="hourlyChart"></canvas>
+  </div>
+
+  <div class="panel">
+    <h3>3-Day Forecast</h3>
+    <canvas id="forecastChart"></canvas>
+  </div>
+
+  <div class="panel">
+    <h3>Settings</h3>
+    <div id="settingsPanel">
+      <label><input type="checkbox" id="toggleClouds"> Show Cloud Overlay</label>
+    </div>
+    <div class="toggle" onclick="toggleSettings()">Toggle Settings Panel</div>
+  </div>
+</div>
+
+<script>
+let marker, cloudLayer;
+let favorites = [];
+let useFahrenheit = false;
+let hourlyChart, forecastChart;
+
+const map = L.map('map').setView([20,0],2);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+
+// Cloud/radar overlay
+cloudLayer = L.tileLayer('https://tile.openweathermap.org/map/clouds_new/{z}/{x}/{y}.png?appid=439d4b804bc8187953eb36d2a8c26a02', {
+  opacity: 0.5
+});
+
+document.getElementById('toggleClouds').onchange = e => {
+  if(e.target.checked) cloudLayer.addTo(map);
+  else map.removeLayer(cloudLayer);
+};
+
+map.on('click', e => moveToLocation(e.latlng.lat, e.latlng.lng));
+
+async function moveToLocation(lat, lon){
+  if (!marker) marker = L.marker([lat,lon]).addTo(map);
+  else marker.setLatLng([lat,lon]);
+  fetchWeather(lat,lon);
+}
+
+function CtoF(c){ return (c*9/5+32).toFixed(1); }
+function iconForWeather(t,p){ if(p>0)return '🌧️'; if(t>28)return '☀️'; if(t>15)return '⛅'; if(t>5)return '🌥️'; return '❄️'; }
+
+async function fetchWeather(lat, lon){
+  const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,precipitation,apparent_temperature,wind_speed_10m&hourly=temperature_2m&daily=temperature_2m_max,temperature_2m_min&timezone=auto`;
+  const geo = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}`;
+
+  const w = await fetch(url).then(r=>r.json());
+  const g = await fetch(geo,{headers:{'User-Agent':'app'}}).then(r=>r.json());
+
+  let loc = g.address.city || g.address.town || g.address.village || g.address.state || `(${lat},${lon})`;
+  if(g.address.country) loc += ', '+g.address.country;
+
+  showWeather(w, loc);
+  getAlerts(lat, lon);
+}
+
+function showWeather(data, loc){
+  document.getElementById('locationName').textContent = loc;
+  let t=data.current.temperature_2m;
+  let f=data.current.apparent_temperature;
+  let p=data.current.precipitation;
+  let w=(data.current.wind_speed_10m*3.6).toFixed(1);
+  let icon=iconForWeather(t,p);
+
+  const T=useFahrenheit?CtoF(t):t.toFixed(1);
+  const F=useFahrenheit?CtoF(f):f.toFixed(1);
+  const U=useFahrenheit?'°F':'°C';
+
+  document.getElementById('currentWeather').innerHTML = `
+    <div class="icons">${icon}</div>
+    <div><b>Temperature:</b> ${T}${U}</div>
+    <div><b>Feels Like:</b> ${F}${U}</div>
+    <div><b>Wind:</b> ${w} km/h</div>
+    <div><b>Precipitation:</b> ${p} mm</div>
+  `;
+
+  renderHourlyChart(data);
+  renderForecastChart(data);
+
+  document.getElementById('addFavorite').onclick = () => addFavorite(loc, data);
+}
+
+function renderHourlyChart(data){
+  const hours = data.hourly.time.slice(0,24);
+  let temps = data.hourly.temperature_2m.slice(0,24);
+  if(useFahrenheit) temps = temps.map(CtoF);
+  if(hourlyChart) hourlyChart.destroy();
+  hourlyChart=new Chart(document.getElementById('hourlyChart'),{
+    type:'line',data:{labels:hours,datasets:[{label:'Hourly Temp',data:temps,borderWidth:3}]}
+  });
+}
+
+function renderForecastChart(data){
+  const days=data.daily.time;
+  let tmax=data.daily.temperature_2m_max;
+  let tmin=data.daily.temperature_2m_min;
+  if(useFahrenheit){ tmax=tmax.map(CtoF); tmin=tmin.map(CtoF); }
+  if(forecastChart) forecastChart.destroy();
+  forecastChart=new Chart(document.getElementById('forecastChart'),{
+    type:'line',data:{labels:days,datasets:[{label:'Max',data:tmax,borderWidth:3},{label:'Min',data:tmin,borderWidth:3}]}
+  });
+}
+
+// Favorites
+function addFavorite(name, data){
+  favorites.push({ name, data });
+  updateFavorites();
+}
+function updateFavorites(){
+  const list = document.getElementById('favoritesList');
+  list.innerHTML = '';
+  favorites.forEach(f => {
+    const div=document.createElement('div');
+    div.textContent=f.name;
+    div.onclick=()=>showWeather(f.data,f.name);
+    list.appendChild(div);
+  });
+}
+
+// Location search autocomplete
+const searchBox=document.getElementById('searchBox');
+searchBox.oninput = async ()=>{
+  const q=searchBox.value.trim();
+  if(!q){ document.getElementById('autocomplete').innerHTML=''; return; }
+  const url=`https://nominatim.openstreetmap.org/search?format=json&q=${q}`;
+  const results=await fetch(url).then(r=>r.json());
+  const box=document.getElementById('autocomplete');
+  box.innerHTML='';
+  results.slice(0,5).forEach(r=>{
+    const d=document.createElement('div');
+    d.style.padding='8px';
+    d.style.cursor='pointer';
+    d.textContent=r.display_name;
+    d.onclick=()=>{
+      moveToLocation(r.lat, r.lon);
+      box.innerHTML='';
+      searchBox.value='';
+    };
+    box.appendChild(d);
+  });
+};
+
+// Toggle settings panel
+function toggleSettings(){
+  const p=document.getElementById('settingsPanel');
+  p.style.display = p.style.display==='block' ? 'none' : 'block';
+}
+
+// Weather alerts
+async function getAlerts(lat, lon){
+  const url=`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&alerts=true`;
+  const a=await fetch(url).then(r=>r.json());
+  const box=document.getElementById('alertsBox');
+  if(a.alerts && a.alerts.length){
+    box.style.display='block';
+    box.innerHTML = `<b>⚠ Weather Alerts:</b><br>` + a.alerts.map(x=>x.event).join('<br>');
+  } else {
+    box.style.display='none';
+  }
+}
+
+document.getElementById('unitToggle').onclick = () => {
+  useFahrenheit=!useFahrenheit;
+  document.getElementById('unitToggle').textContent = useFahrenheit?'Switch to °C':'Switch to °F';
+};
+</script>
+</body>
+</html>

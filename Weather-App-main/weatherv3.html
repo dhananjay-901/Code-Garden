@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Interactive Weather Map</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    body {
+      margin: 0;
+      font-family: 'Segoe UI', sans-serif;
+      background: linear-gradient(135deg, #667eea, #764ba2);
+      padding: 20px;
+    }
+    .container {
+      max-width: 1200px;
+      margin: auto;
+      background: #fff;
+      border-radius: 20px;
+      overflow: hidden;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+    }
+    header {
+      background: linear-gradient(135deg, #667eea, #764ba2);
+      color: #fff;
+      text-align: center;
+      padding: 30px;
+    }
+    #map { height: 450px; }
+    .weather-info { padding: 30px; background: #f8f9fa; }
+    .weather-card { display:none; background:#fff; padding:20px; border-radius:14px; box-shadow:0 6px 20px rgba(0,0,0,0.1); }
+    .weather-card.active { display:block; animation:fadeIn .5s ease; }
+    @keyframes fadeIn { from{opacity:0;} to{opacity:1;} }
+    .toggle { cursor:pointer; background:#667eea; padding:8px 14px; color:#fff; border-radius:8px; display:inline-block; margin-top:10px; }
+    .icons { font-size:40px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>🌤️ Interactive Weather Map</h1>
+      <p>Click anywhere on the map to get weather + hourly & daily forecast</p>
+    </header>
+
+    <div id="map"></div>
+
+    <div class="weather-info">
+      <div id="instruction" style="text-align:center; padding:40px; color:#555;">Click a location on the map to begin</div>
+
+      <div class="weather-card" id="weatherCard">
+        <h2 id="locationName"></h2>
+        <div id="unitToggle" class="toggle">Switch to °F</div>
+        <div id="currentWeather" style="display:flex; gap:20px; margin-top:20px; flex-wrap:wrap;"></div>
+        <canvas id="hourlyChart"></canvas>
+        <canvas id="forecastChart"></canvas>
+      </div>
+    </div>
+  </div>
+
+<script>
+let marker;
+let useFahrenheit = false;
+let hourlyChart, forecastChart;
+
+const map = L.map('map').setView([20,0],2);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+
+map.on('click', e => {
+  const lat = e.latlng.lat.toFixed(4);
+  const lon = e.latlng.lng.toFixed(4);
+  if (!marker) marker = L.marker(e.latlng).addTo(map);
+  else marker.setLatLng(e.latlng);
+  fetchWeather(lat, lon);
+});
+
+function CtoF(c){ return (c*9/5+32).toFixed(1); }
+function iconForWeather(t,p){ if(p>0)return '🌧️'; if(t>28)return '☀️'; if(t>15)return '⛅'; if(t>5)return '🌥️'; return '❄️'; }
+
+async function fetchWeather(lat, lon){
+  document.getElementById('instruction').style.display='none';
+
+  const weatherURL = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,precipitation,apparent_temperature,wind_speed_10m&hourly=temperature_2m&daily=temperature_2m_max,temperature_2m_min&timezone=auto`;
+  const geoURL = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}&zoom=10`;
+
+  const w = await fetch(weatherURL).then(r=>r.json());
+  const g = await fetch(geoURL,{headers:{'User-Agent':'WeatherApp'}}).then(r=>r.json());
+
+  const loc = g.address.city || g.address.town || g.address.village || g.address.state || `(${lat},${lon})`;
+  displayWeather(w, loc + (g.address.country ? ', '+g.address.country : ''));
+}
+
+function displayWeather(data, name){
+  const card=document.getElementById('weatherCard');
+  const cw=document.getElementById('currentWeather');
+  document.getElementById('locationName').textContent=name;
+
+  let t=data.current.temperature_2m;
+  let f=data.current.apparent_temperature;
+  let p=data.current.precipitation;
+  let w=(data.current.wind_speed_10m*3.6).toFixed(1);
+  let icon=iconForWeather(t,p);
+
+  const T=useFahrenheit?CtoF(t):t.toFixed(1);
+  const F=useFahrenheit?CtoF(f):f.toFixed(1);
+  const U=useFahrenheit?'°F':'°C';
+
+  cw.innerHTML=`<div class="icons">${icon}</div>
+  <div><b>Temperature:</b> ${T}${U}</div>
+  <div><b>Feels Like:</b> ${F}${U}</div>
+  <div><b>Wind:</b> ${w} km/h</div>
+  <div><b>Precipitation:</b> ${p} mm</div>`;
+
+  renderHourlyChart(data);
+  renderForecastChart(data);
+  card.classList.add('active');
+}
+
+function renderHourlyChart(data){
+  const hours=data.hourly.time.slice(0,24);
+  let temps=data.hourly.temperature_2m.slice(0,24);
+  if(useFahrenheit) temps=temps.map(CtoF);
+  if(hourlyChart) hourlyChart.destroy();
+  hourlyChart=new Chart(document.getElementById('hourlyChart'),{
+    type:'line',data:{labels:hours,datasets:[{label:'Hourly Temp',data:temps,borderWidth:3}]},options:{responsive:true}
+  });
+}
+
+function renderForecastChart(data){
+  const days=data.daily.time;
+  let tmax=data.daily.temperature_2m_max;
+  let tmin=data.daily.temperature_2m_min;
+  if(useFahrenheit){ tmax=tmax.map(CtoF); tmin=tmin.map(CtoF); }
+  if(forecastChart) forecastChart.destroy();
+  forecastChart=new Chart(document.getElementById('forecastChart'),{
+    type:'line',data:{labels:days,datasets:[{label:'Max',data:tmax,borderWidth:3},{label:'Min',data:tmin,borderWidth:3}]},options:{responsive:true}
+  });
+}
+
+document.getElementById('unitToggle').onclick=()=>{
+  useFahrenheit=!useFahrenheit;
+  document.getElementById('unitToggle').textContent=useFahrenheit?'Switch to °C':'Switch to °F';
+};
+</script>
+</body>
+</html>

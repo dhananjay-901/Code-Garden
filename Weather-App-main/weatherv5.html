@@ -1,0 +1,369 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Interactive Weather Map — Enhanced</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css" />
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+
+<style>
+  :root{
+    --bg-1: #0f172a; /* night */
+    --bg-2: #e6f0ff; /* day card */
+    --accent: #667eea;
+    --accent-2: #764ba2;
+    --card-bg: linear-gradient(135deg,var(--bg-2),#fff);
+    --text: #0b1220;
+  }
+  .dark{ --card-bg: linear-gradient(135deg,#071022,#021018); --text:#e6eef8; }
+  .light{ --card-bg: linear-gradient(135deg,#ffffff,#f3f8ff); --text:#071022; }
+
+  html,body{height:100%; margin:0; font-family:Inter,Segoe UI,system-ui,Arial; background:var(--bg-1); color:var(--text);}
+  .wrap{max-width:1200px;margin:18px auto;padding:16px;}
+
+  .app{display:grid;grid-template-columns: 1fr 380px; gap:16px; align-items:start;}
+  @media(max-width:900px){ .app{grid-template-columns:1fr; padding-bottom:60px;} }
+
+  /* header */
+  header{ display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:8px; }
+  .brand{display:flex; gap:12px; align-items:center}
+  .logo{width:48px;height:48px;border-radius:10px;background:linear-gradient(135deg,var(--accent),var(--accent-2));display:flex;align-items:center;justify-content:center;color:white;font-weight:700}
+  .title{font-size:18px;font-weight:600}
+  .subtitle{font-size:12px;color:rgba(255,255,255,0.85)}
+
+  /* main card */
+  .card{background:var(--card-bg); border-radius:14px; padding:12px; box-shadow:0 10px 40px rgba(2,6,23,0.5); overflow:hidden; transition:transform .35s ease, box-shadow .35s ease;}
+  .card:hover{ transform:translateY(-6px); box-shadow:0 20px 60px rgba(2,6,23,0.6); }
+
+  /* map */
+  #map{height:520px;border-radius:12px; overflow:hidden; transition:height .3s ease;}
+  @media(max-width:900px){ #map{height:360px} }
+
+  /* controls */
+  .controls{display:flex; gap:8px; flex-wrap:wrap}
+  .btn{background:rgba(255,255,255,0.06); padding:8px 12px; border-radius:8px; color:var(--text); border:1px solid rgba(255,255,255,0.04); cursor:pointer; transition:transform .15s ease}
+  .btn:active{ transform:scale(.98) }
+  .toggle{display:inline-flex; gap:8px; align-items:center}
+
+  /* right column */
+  .sidebar{display:flex; flex-direction:column; gap:12px}
+  .panel{background:var(--card-bg); padding:12px; border-radius:12px;}
+
+  .search{display:flex; gap:8px}
+  .search input{flex:1;padding:10px;border-radius:8px;border:1px solid rgba(0,0,0,0.08)}
+  .autocomplete{position:relative}
+  .ac-list{position:absolute; top:44px; left:0; right:0; background:white; z-index:2000; border-radius:8px; box-shadow:0 6px 24px rgba(2,6,23,0.2); max-height:220px; overflow:auto}
+  .ac-item{padding:8px 10px; border-bottom:1px solid #f0f2f7; cursor:pointer}
+  .ac-item:hover{background:#f5f7ff}
+
+  /* current weather */
+  .current{display:flex; gap:12px; align-items:center}
+  .big-icon{font-size:44px}
+  .metrics{display:grid; grid-template-columns:1fr 1fr; gap:8px}
+  .metric{background:rgba(255,255,255,0.04); padding:8px; border-radius:8px}
+
+  /* charts */
+  canvas{max-width:100%; height:160px;}
+  .small{font-size:13px;color:rgba(0,0,0,0.6)}
+
+  /* favorites */
+  .fav-item{padding:8px;border-radius:8px;background:linear-gradient(90deg,rgba(102,126,234,0.12),rgba(118,75,162,0.06));cursor:pointer;margin-bottom:6px}
+
+  /* alerts */
+  .alerts{background:#fff3f3;border:1px solid #f5c2c2;color:#6b0505;padding:10px;border-radius:8px}
+
+  /* animated transitions */
+  .fade-enter{opacity:0; transform:translateY(6px)}
+  .fade-enter-active{opacity:1; transform:none; transition:opacity .4s, transform .4s}
+
+  /* cloud overlay legend */
+  .layer-toggle{display:flex; gap:8px; align-items:center}
+
+  /* mobile bottom bar */
+  @media(max-width:900px){ .mobile-bar{ position:fixed; left:0; right:0; bottom:0; display:flex; gap:8px; padding:12px; background:linear-gradient(90deg,#ffffff22,#00000022); justify-content:center; z-index:1000 } }
+
+</style>
+</head>
+<body class="dark">
+<div class="wrap">
+  <header style="margin-bottom:12px;">
+    <div class="brand">
+      <div class="logo">W</div>
+      <div>
+        <div class="title">Interactive Weather Map</div>
+        <div class="subtitle">Click the map or search — now with AQI, satellite layers, favorites, and animated UI</div>
+      </div>
+    </div>
+    <div class="controls">
+      <div id="themeBtn" class="btn">Auto Theme</div>
+      <div id="cloudToggle" class="btn">Clouds: Off</div>
+      <div id="satToggle" class="btn">Satellite: Off</div>
+      <div id="aqiToggle" class="btn">AQI: Off</div>
+      <div id="settingsBtn" class="btn">Settings</div>
+    </div>
+  </header>
+
+  <div class="app">
+    <div class="card">
+      <div style="padding:12px; display:flex; justify-content:space-between; gap:12px; align-items:center">
+        <div style="flex:1">
+          <div class="search">
+            <div style="flex:1; position:relative">
+              <input id="searchBox" placeholder="Search location (city, place)..." />
+              <div id="autocomplete" class="ac-list" style="display:none"></div>
+            </div>
+            <button id="locBtn" class="btn">My Location</button>
+          </div>
+          <div id="map" style="margin-top:10px"></div>
+        </div>
+      </div>
+    </div>
+
+    <aside class="sidebar">
+      <div class="panel">
+        <div class="current">
+          <div class="big-icon" id="bigIcon">☀️</div>
+          <div style="flex:1">
+            <div id="locationName" style="font-weight:600">Click map to load weather</div>
+            <div id="updatedAt" class="small">—</div>
+            <div style="margin-top:8px" class="metrics" id="metrics"></div>
+          </div>
+        </div>
+        <div style="margin-top:10px; display:flex; gap:8px">
+          <button id="unitToggle" class="btn">Switch to °F</button>
+          <button id="addFav" class="btn">Add Favorite</button>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h4 class="small">Hourly Temperature</h4>
+        <canvas id="hourlyChart"></canvas>
+      </div>
+
+      <div class="panel">
+        <h4 class="small">3-day Forecast</h4>
+        <canvas id="forecastChart"></canvas>
+      </div>
+
+      <div class="panel" id="aqiPanel" style="display:none">
+        <h4 class="small">Air Quality Index (PM2.5 / PM10)</h4>
+        <canvas id="aqiChart"></canvas>
+      </div>
+
+      <div class="panel">
+        <div style="display:flex; justify-content:space-between; align-items:center"><div class="small">Favorites</div><button id="clearFav" class="btn">Clear</button></div>
+        <div id="favoritesList" style="margin-top:8px"></div>
+      </div>
+
+      <div class="panel alerts" id="alertsBox" style="display:none"></div>
+
+      <div class="panel" id="settingsPanel" style="display:none">
+        <div style="display:flex; flex-direction:column; gap:8px">
+          <label><input type="checkbox" id="cloudsCheckbox" /> Show cloud overlay</label>
+          <label><input type="checkbox" id="satCheckbox" /> Show satellite layer (Esri)</label>
+          <label><input type="checkbox" id="aqiCheckbox" /> Fetch AQI data</label>
+        </div>
+      </div>
+    </aside>
+  </div>
+</div>
+
+<script>
+// State
+let marker = null;
+let cloudLayer = null;
+let satelliteLayer = null;
+let useF = false;
+let favorites = JSON.parse(localStorage.getItem('wf_favs')||'[]');
+let hourlyChart, forecastChart, aqiChart;
+
+// Default map (Esri World Imagery is used for satellite)
+const map = L.map('map', {attributionControl:true}).setView([20,0],2);
+const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {maxZoom:19}).addTo(map);
+const esri = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {maxZoom:19});
+
+// Cloud overlay using OpenWeatherMap tile template — requires key if switching to OWM. Keep off by default.
+cloudLayer = L.tileLayer('https://tile.openweathermap.org/map/clouds_new/{z}/{x}/{y}.png?appid={API_KEY}', {opacity:0.5});
+
+// Satellite layers for temperature/wind/precip (placeholders - require API keys if you use OWM)
+const tempTiles = L.tileLayer('https://tile.openweathermap.org/map/temp_new/{z}/{x}/{y}.png?appid={API_KEY}', {opacity:0.6});
+const windTiles = L.tileLayer('https://tile.openweathermap.org/map/wind_new/{z}/{x}/{y}.png?appid={API_KEY}', {opacity:0.6});
+const precipTiles = L.tileLayer('https://tile.openweathermap.org/map/precipitation_new/{z}/{x}/{y}.png?appid={API_KEY}', {opacity:0.6});
+
+// Helpers
+function setThemeAuto(){
+  const h = new Date().getHours();
+  document.body.classList.toggle('dark', h<6 || h>=18);
+  document.body.classList.toggle('light', h>=6 && h<18);
+}
+setThemeAuto();
+
+document.getElementById('themeBtn').onclick = ()=>{ setThemeAuto(); alert('Theme set based on your local time'); };
+
+// Toggle cloud/satellite/AQI quick buttons
+const cloudBtn = document.getElementById('cloudToggle');
+const satBtn = document.getElementById('satToggle');
+const aqiBtn = document.getElementById('aqiToggle');
+
+cloudBtn.onclick = ()=>{ const on = !map.hasLayer(cloudLayer); if(on) cloudLayer.addTo(map); else map.removeLayer(cloudLayer); cloudBtn.textContent = `Clouds: ${on? 'On':'Off'}`; document.getElementById('cloudsCheckbox').checked = on; };
+satBtn.onclick = ()=>{ const on = !map.hasLayer(esri); if(on) esri.addTo(map); else map.removeLayer(esri); satBtn.textContent = `Satellite: ${on? 'On':'Off'}`; document.getElementById('satCheckbox').checked = on; };
+aqiBtn.onclick = ()=>{ const on = document.getElementById('aqiPanel').style.display==='none'; document.getElementById('aqiPanel').style.display = on? 'block':'none'; aqiBtn.textContent = `AQI: ${on? 'On':'Off'}`; document.getElementById('aqiCheckbox').checked = on; };
+
+// Settings UI
+document.getElementById('settingsBtn').onclick = ()=>{ const p=document.getElementById('settingsPanel'); p.style.display = p.style.display==='none' ? 'block' : 'none'; };
+
+// Map click
+map.on('click', e => { const {lat,lng} = e.latlng; jumpTo(lat,lng); });
+
+async function jumpTo(lat, lon){
+  if(!marker) marker = L.marker([lat,lon]).addTo(map);
+  else marker.setLatLng([lat,lon]);
+  map.setView([lat,lon], 8, {animate:true});
+  await loadWeather(lat,lon);
+}
+
+// Geolocation
+document.getElementById('locBtn').onclick = ()=>{ navigator.geolocation?.getCurrentPosition(pos=> jumpTo(pos.coords.latitude, pos.coords.longitude), err=> alert('Location denied or unavailable')) };
+
+// Search + autocomplete using Nominatim
+const searchBox = document.getElementById('searchBox');
+const acList = document.getElementById('autocomplete');
+let acTimer;
+searchBox.addEventListener('input', ()=>{
+  clearTimeout(acTimer);
+  const q = searchBox.value.trim();
+  if(!q){ acList.style.display='none'; return; }
+  acTimer = setTimeout(async ()=>{
+    const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(q)}`;
+    try{
+      const res = await fetch(url); const data = await res.json();
+      acList.innerHTML=''; data.slice(0,6).forEach(item=>{
+        const div = document.createElement('div'); div.className='ac-item'; div.textContent = item.display_name;
+        div.onclick = ()=>{ acList.style.display='none'; searchBox.value=''; jumpTo(item.lat,item.lon); };
+        acList.appendChild(div);
+      });
+      acList.style.display = data.length? 'block':'none';
+    }catch(e){ console.warn(e); acList.style.display='none'; }
+  }, 300);
+});
+
+// Core: load weather (Open-Meteo) + AQI (Open-Meteo air-quality) + alerts
+async function loadWeather(lat, lon){
+  try{
+    const base = 'https://api.open-meteo.com/v1/forecast';
+    const params = `latitude=${lat}&longitude=${lon}&timezone=auto&current_weather=true&hourly=temperature_2m,apparent_temperature,precipitation,wind_speed_10m&daily=temperature_2m_max,temperature_2m_min,precipitation_sum`;
+    const url = `${base}?${params}`;
+    const resp = await fetch(url); const data = await resp.json();
+
+    // Update UI
+    updateCurrent(data, lat, lon);
+    renderHourly(data.hourly);
+    renderDaily(data.daily);
+    if(document.getElementById('aqiCheckbox').checked) fetchAQI(lat,lon);
+    fetchAlerts(lat,lon);
+  }catch(e){ console.error(e); alert('Failed to load weather data.'); }
+}
+
+function updateCurrent(data, lat, lon){
+  const cur = data.current_weather || {};
+  const t = cur.temperature ?? null;
+  const windMs = cur.windspeed ?? null;
+  const wdir = cur.winddirection ?? null;
+
+  document.getElementById('bigIcon').textContent = pickIcon(t, 0);
+  document.getElementById('locationName').textContent = `Lat:${lat.toFixed(3)}, Lon:${lon.toFixed(3)}`;
+  document.getElementById('updatedAt').textContent = `Updated: ${new Date().toLocaleString()}`;
+
+  const metrics = document.getElementById('metrics');
+  metrics.innerHTML = `
+    <div class="metric"><b>Temp</b><div>${formatTemp(t)}</div></div>
+    <div class="metric"><b>Feels</b><div>${formatTemp(cur.apparent_temperature)}</div></div>
+    <div class="metric"><b>Wind</b><div>${windMs? (windMs*3.6).toFixed(1)+' km/h':'—'}</div></div>
+    <div class="metric"><b>Dir</b><div>${wdir? wdir+'°':'—'}</div></div>
+  `;
+}
+
+function formatTemp(v){ if(v===null||v===undefined) return '—'; return useF? ( (v*9/5+32).toFixed(1)+' °F') : (v.toFixed(1)+' °C'); }
+function pickIcon(temp, precip){ if(precip>0.5) return '🌧️'; if(temp>28) return '☀️'; if(temp>15) return '⛅'; if(temp>5) return '🌥️'; return '❄️'; }
+
+// Charts
+function renderHourly(hourly){
+  if(!hourly) return;
+  const times = hourly.time.slice(0,24).map(t=> t.replace('T',' '));
+  let temps = hourly.temperature_2m.slice(0,24);
+  if(useF) temps = temps.map(v=> (v*9/5+32).toFixed(1));
+  if(hourlyChart) hourlyChart.destroy();
+  hourlyChart = new Chart(document.getElementById('hourlyChart'),{type:'line',data:{labels:times,datasets:[{label:`Temp (${useF?'°F':'°C'})`,data:temps, borderWidth:2, tension:0.3, fill:true}]}, options:{plugins:{legend:{display:false}}}});
+}
+function renderDaily(daily){
+  if(!daily) return;
+  const days = daily.time;
+  let tmax = daily.temperature_2m_max;
+  let tmin = daily.temperature_2m_min;
+  if(useF){ tmax = tmax.map(v=> (v*9/5+32).toFixed(1)); tmin = tmin.map(v=> (v*9/5+32).toFixed(1)); }
+  if(forecastChart) forecastChart.destroy();
+  forecastChart = new Chart(document.getElementById('forecastChart'),{type:'bar',data:{labels:days,datasets:[{label:'Max',data:tmax},{label:'Min',data:tmin}]}, options:{responsive:true}});
+}
+
+// AQI (Open-Meteo air-quality endpoint, fallback if not available)
+async function fetchAQI(lat, lon){
+  try{
+    const url = `https://air-quality-api.open-meteo.com/v1/air-quality?latitude=${lat}&longitude=${lon}&hourly=pm10,pm2_5`; // open-meteo air quality endpoint
+    const r = await fetch(url); const j = await r.json();
+    if(j.hourly){ const times = j.hourly.time.slice(0,24); const pm25 = j.hourly.pm2_5.slice(0,24); const pm10 = j.hourly.pm10.slice(0,24);
+      if(aqiChart) aqiChart.destroy();
+      aqiChart = new Chart(document.getElementById('aqiChart'),{type:'line', data:{labels:times, datasets:[{label:'PM2.5',data:pm25},{label:'PM10',data:pm10}]}, options:{responsive:true}});
+      document.getElementById('aqiPanel').style.display='block';
+    }
+  }catch(e){ console.warn('AQI fetch failed', e); }
+}
+
+// Alerts (Open-Meteo alerts property or fallback)
+async function fetchAlerts(lat, lon){
+  try{
+    const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&alerts=true`;
+    const r = await fetch(url); const j = await r.json();
+    const box = document.getElementById('alertsBox');
+    if(j.alerts && j.alerts.length){ box.style.display='block'; box.innerHTML = `<b>⚠ Weather Alerts:</b><br>` + j.alerts.map(a=>`<div style="margin-top:6px"><b>${a.event}</b><div>${a.description||''}</div></div>`).join(''); }
+    else box.style.display='none';
+  }catch(e){ console.warn('Alerts error', e); }
+}
+
+// Favorites
+function refreshFavUI(){ const el=document.getElementById('favoritesList'); el.innerHTML=''; favorites.forEach((f,i)=>{ const d=document.createElement('div'); d.className='fav-item'; d.textContent=f.name; d.onclick=()=> jumpTo(f.lat,f.lon); const rm = document.createElement('button'); rm.textContent='Remove'; rm.style.float='right'; rm.onclick=(ev)=>{ ev.stopPropagation(); favorites.splice(i,1); saveFavs(); refreshFavUI(); }; d.appendChild(rm); el.appendChild(d); }); }
+function saveFavs(){ localStorage.setItem('wf_favs', JSON.stringify(favorites)); }
+function addCurrentToFav(){ if(!marker) return alert('Pick a location first'); const latlng = marker.getLatLng(); const name = document.getElementById('locationName').textContent; favorites.push({name, lat:latlng.lat, lon:latlng.lng}); saveFavs(); refreshFavUI(); }
+
+document.getElementById('addFav').onclick = addCurrentToFav;
+document.getElementById('clearFav').onclick = ()=>{ favorites=[]; saveFavs(); refreshFavUI(); };
+refreshFavUI();
+
+// Unit toggle
+document.getElementById('unitToggle').onclick = ()=>{ useF = !useF; document.getElementById('unitToggle').textContent = useF? 'Switch to °C':'Switch to °F'; // re-render charts if data exists by re-invoking last loaded data
+  // crude approach: if marker exists, re-fetch to update charts and units
+  if(marker){ const ll = marker.getLatLng(); loadWeather(ll.lat, ll.lng); }
+};
+
+// Map interactions: smooth pan on favorite click (handled in jumpTo)
+
+// Cloud/Satellite checkboxes reflect quick buttons
+document.getElementById('cloudsCheckbox').onchange = e => { if(e.target.checked) cloudLayer.addTo(map); else map.removeLayer(cloudLayer); cloudBtn.textContent = `Clouds: ${e.target.checked? 'On':'Off'}`; };
+document.getElementById('satCheckbox').onchange = e => { if(e.target.checked) esri.addTo(map); else map.removeLayer(esri); satBtn.textContent = `Satellite: ${e.target.checked? 'On':'Off'}`; };
+document.getElementById('aqiCheckbox').onchange = e => { document.getElementById('aqiPanel').style.display = e.target.checked? 'block':'none'; aqiBtn.textContent = `AQI: ${e.target.checked? 'On':'Off'}`; if(e.target.checked && marker){ const ll = marker.getLatLng(); fetchAQI(ll.lat,ll.lng); } };
+
+// animated transitions: simple fade-in when panels update
+function fadeIn(el){ el.classList.add('fade-enter'); requestAnimationFrame(()=> el.classList.add('fade-enter-active')); setTimeout(()=> el.classList.remove('fade-enter','fade-enter-active'),450); }
+
+// initialize mobile bottom bar
+if(window.innerWidth <= 900){ const mb = document.createElement('div'); mb.className='mobile-bar'; mb.innerHTML = `<button class="btn" onclick="map.setView([20,0],2)">Reset</button><button class="btn" onclick="document.getElementById('locBtn').click()">My Location</button><button class="btn" onclick="document.getElementById('favoritesList').scrollIntoView()">Favorites</button>`; document.body.appendChild(mb); }
+
+// On load: restore favorites
+(function(){ try{ const s = localStorage.getItem('wf_favs'); if(s){ favorites = JSON.parse(s); refreshFavUI(); } }catch(e){} })();
+
+// small UX: animate map resize when sidebar toggles (not implemented heavy)
+// END
+</script>
+</body>
+</html>

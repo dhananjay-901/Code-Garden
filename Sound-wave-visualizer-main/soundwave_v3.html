@@ -1,0 +1,421 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Advanced Visualizer — 3D Waveform + File Load</title>
+<style>
+  :root{--bg:#05060a}
+  html,body{height:100%;margin:0;background:var(--bg);font-family:Inter,system-ui,Arial;color:#fff}
+  #glCanvas{position:fixed;inset:0;width:100%;height:100%;display:block}
+  #ui{position:fixed;right:18px;top:18px;z-index:60;padding:12px;border-radius:10px;background:rgba(0,0,0,0.45);backdrop-filter:blur(6px);box-shadow:0 6px 20px rgba(0,0,0,0.6);min-width:260px}
+  .row{display:flex;gap:8px;align-items:center;margin-bottom:8px}
+  input[type=file]{color:#fff}
+  button{padding:8px 10px;border-radius:8px;border:1px solid rgba(255,255,255,0.06);background:rgba(255,255,255,0.04);cursor:pointer}
+  label{font-size:13px}
+  #overlay{position:fixed;left:18px;bottom:18px;color:rgba(255,255,255,0.7);font-size:13px}
+</style>
+</head>
+<body>
+<canvas id="glCanvas"></canvas>
+<div id="ui">
+  <div style="font-weight:600;margin-bottom:6px">Visualizer Controls</div>
+  <div class="row">
+    <input id="fileInput" type="file" accept="audio/*,video/*" />
+    <button id="btnMic">Use Microphone</button>
+  </div>
+  <div class="row">
+    <button id="btnPlay" disabled>Play</button>
+    <button id="btnPause" disabled>Pause</button>
+    <button id="btnFS">Fullscreen</button>
+  </div>
+  <div style="margin-top:6px">
+    <label>3D Depth: <span id="depthLabel">30</span></label>
+    <input id="depth" type="range" min="8" max="128" value="30" />
+  </div>
+  <div style="margin-top:6px">
+    <label>Sensitivity: <span id="sensLabel">1.0</span></label>
+    <input id="sensitivity" type="range" min="0.2" max="5.0" step="0.1" value="1.0" />
+  </div>
+  <div style="margin-top:6px">
+    <label>Bars: <input id="toggleBars" type="checkbox" checked /></label>
+    <label style="margin-left:8px">Glow: <input id="toggleGlow" type="checkbox" checked /></label>
+  </div>
+</div>
+<div id="overlay">Tip: Load an MP3/MP4 or click "Use Microphone" • Drag file onto the page to load</div>
+
+<script>
+// Advanced single-file visualizer
+// - Load MP3/MP4 via file input or drag/drop
+// - Use microphone
+// - 3D waveform rendered with raw WebGL
+// - Frequency bars overlay (2D via WebGL as well)
+
+const canvas = document.getElementById('glCanvas');
+let gl = canvas.getContext('webgl', {preserveDrawingBuffer:true});
+if(!gl) { alert('WebGL not supported'); }
+
+let W = canvas.width = innerWidth;
+let H = canvas.height = innerHeight;
+window.addEventListener('resize', ()=>{W = canvas.width = innerWidth; H = canvas.height = innerHeight; gl.viewport(0,0,W,H);});
+
+// UI
+const fileInput = document.getElementById('fileInput');
+const btnMic = document.getElementById('btnMic');
+const btnPlay = document.getElementById('btnPlay');
+const btnPause = document.getElementById('btnPause');
+const btnFS = document.getElementById('btnFS');
+const depthInput = document.getElementById('depth');
+const depthLabel = document.getElementById('depthLabel');
+const sensInput = document.getElementById('sensitivity');
+const sensLabel = document.getElementById('sensLabel');
+const toggleBars = document.getElementById('toggleBars');
+const toggleGlow = document.getElementById('toggleGlow');
+
+depthInput.oninput = ()=> depthLabel.textContent = depthInput.value;
+sensInput.oninput = ()=> sensLabel.textContent = Number(sensInput.value).toFixed(1);
+btnFS.onclick = ()=>{ if(!document.fullscreenElement) document.documentElement.requestFullscreen(); else document.exitFullscreen(); }
+
+// Audio setup
+let audioCtx = null;
+let analyser = null;
+let freqData = null;
+let timeData = null;
+let sourceNode = null;
+let audioElement = null;
+let usingMic = false;
+
+async function ensureAudio(){
+  if(audioCtx) return;
+  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  if(audioCtx.state === 'suspended') await audioCtx.resume();
+}
+
+// Create HTMLAudioElement for file playback
+fileInput.addEventListener('change', async (e)=>{
+  const f = e.target.files[0];
+  if(!f) return;
+  await loadFile(f);
+});
+
+// drag/drop
+window.addEventListener('dragover', e=>{e.preventDefault();});
+window.addEventListener('drop', async (e)=>{e.preventDefault(); if(e.dataTransfer.files && e.dataTransfer.files[0]) await loadFile(e.dataTransfer.files[0]);});
+
+async function loadFile(file){
+  await ensureAudio();
+  usingMic = false;
+  if(audioElement){ audioElement.pause(); audioElement.src = ''; }
+  audioElement = document.createElement('audio');
+  audioElement.controls = false;
+  audioElement.src = URL.createObjectURL(file);
+  audioElement.crossOrigin = 'anonymous';
+
+  if(sourceNode) { try{ sourceNode.disconnect(); }catch(e){} }
+  sourceNode = audioCtx.createMediaElementSource(audioElement);
+  setupAnalyser();
+  sourceNode.connect(analyser);
+  analyser.connect(audioCtx.destination);
+
+  btnPlay.disabled = false; btnPause.disabled = false;
+  audioElement.play();
+}
+
+btnPlay.onclick = ()=>{ if(audioElement) audioElement.play(); }
+btnPause.onclick = ()=>{ if(audioElement) audioElement.pause(); }
+
+// microphone
+btnMic.onclick = async ()=>{
+  await ensureAudio();
+  try{
+    const s = await navigator.mediaDevices.getUserMedia({audio:true, video:false});
+    usingMic = true;
+    if(sourceNode){ try{ sourceNode.disconnect(); }catch(e){} }
+    sourceNode = audioCtx.createMediaStreamSource(s);
+    setupAnalyser();
+    sourceNode.connect(analyser);
+    // do not connect analyser to destination for mic
+    btnPlay.disabled = true; btnPause.disabled = true;
+  }catch(err){ alert('Microphone permission required.'); console.error(err); }
+}
+
+function setupAnalyser(){
+  if(!audioCtx) return;
+  analyser = audioCtx.createAnalyser();
+  analyser.fftSize = 2048;
+  freqData = new Uint8Array(analyser.frequencyBinCount);
+  timeData = new Uint8Array(analyser.fftSize);
+}
+
+// WebGL helpers
+function compileShader(src, type){
+  const s = gl.createShader(type);
+  gl.shaderSource(s, src);
+  gl.compileShader(s);
+  if(!gl.getShaderParameter(s, gl.COMPILE_STATUS)){
+    console.error(gl.getShaderInfoLog(s));
+    gl.deleteShader(s);return null;
+  }
+  return s;
+}
+
+function createProgram(vs, fs){
+  const v = compileShader(vs, gl.VERTEX_SHADER);
+  const f = compileShader(fs, gl.FRAGMENT_SHADER);
+  const p = gl.createProgram();
+  gl.attachShader(p, v); gl.attachShader(p, f); gl.linkProgram(p);
+  if(!gl.getProgramParameter(p, gl.LINK_STATUS)){ console.error(gl.getProgramInfoLog(p)); return null; }
+  return p;
+}
+
+// Simple 3D waveform program
+const VS = `
+attribute vec3 position;
+uniform mat4 uProjection;
+uniform mat4 uView;
+uniform float uAmp;
+attribute float aHeight;
+varying float vHeight;
+void main(){
+  vec3 pos = position;
+  pos.y += aHeight * uAmp;
+  vHeight = aHeight;
+  gl_Position = uProjection * uView * vec4(pos,1.0);
+}
+`;
+
+const FS = `
+precision mediump float;
+varying float vHeight;
+uniform float uTime;
+uniform bool uGlow;
+void main(){
+  float hue = 200.0 + vHeight*120.0;
+  float sat = 0.9;
+  float val = 0.6 + vHeight*0.4;
+  // convert HSV -> RGB (approx)
+  float c = val*sat;
+  float x = c*(1.0 - abs(mod(hue/60.0,2.0)-1.0));
+  vec3 col;
+  if(hue<60.0) col = vec3(c,x,0.0);
+  else if(hue<120.0) col = vec3(x,c,0.0);
+  else if(hue<180.0) col = vec3(0.0,c,x);
+  else if(hue<240.0) col = vec3(0.0,x,c);
+  else if(hue<300.0) col = vec3(x,0.0,c);
+  else col = vec3(c,0.0,x);
+  vec3 final = col + vec3(0.05);
+  if(uGlow) final += vec3(0.08*vHeight);
+  gl_FragColor = vec4(final, 1.0);
+}
+`;
+
+const prog = createProgram(VS, FS);
+const attribPos = gl.getAttribLocation(prog, 'position');
+const attribHeight = gl.getAttribLocation(prog, 'aHeight');
+const uniProj = gl.getUniformLocation(prog, 'uProjection');
+const uniView = gl.getUniformLocation(prog, 'uView');
+const uniAmp = gl.getUniformLocation(prog, 'uAmp');
+const uniTime = gl.getUniformLocation(prog, 'uTime');
+const uniGlow = gl.getUniformLocation(prog, 'uGlow');
+
+// Mesh grid (strips)
+let depth = parseInt(depthInput.value,10); // number of slices along z
+let segments = 256; // points per strip (x direction)
+let positionBuffer = gl.createBuffer();
+let heightBuffer = gl.createBuffer();
+let indexCount = 0;
+let positions = null;
+let heights = null;
+
+function buildMesh(){
+  depth = parseInt(depthInput.value,10);
+  segments = 256;
+  // positions: for each vertex -> x,y,z (initially y zero)
+  positions = new Float32Array(depth * segments * 3);
+  heights = new Float32Array(depth * segments);
+  let ptr = 0;
+  for(let d=0; d<depth; d++){
+    const z = -1.0 + (d/(depth-1))*2.0; // -1..1
+    for(let i=0;i<segments;i++){
+      const x = -1.6 + (i/(segments-1))*3.2; // wide aspect
+      positions[ptr++] = x;
+      positions[ptr++] = 0.0;
+      positions[ptr++] = z*1.6; // scale z
+    }
+  }
+  // heights initially zero
+  for(let i=0;i<heights.length;i++) heights[i]=0.0;
+
+  gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+  gl.bufferData(gl.ARRAY_BUFFER, positions, gl.STATIC_DRAW);
+  gl.bindBuffer(gl.ARRAY_BUFFER, heightBuffer);
+  gl.bufferData(gl.ARRAY_BUFFER, heights, gl.DYNAMIC_DRAW);
+}
+
+buildMesh();
+
+gl.enable(gl.DEPTH_TEST);
+
+// Keep history of spectra (circular)
+let history = new Array(depth);
+for(let i=0;i<depth;i++) history[i] = new Float32Array(segments);
+let historyPtr = 0;
+
+function pushToHistory(arr){
+  // arr length might be <= segments
+  const step = Math.floor(arr.length/segments) || 1;
+  const h = history[historyPtr];
+  for(let i=0;i<segments;i++){
+    const idx = Math.min(arr.length-1, i*step);
+    h[i] = arr[idx]/255.0; // normalize 0..1
+  }
+  historyPtr = (historyPtr+1)%depth;
+}
+
+// Update heights buffer from history
+function updateHeights(){
+  // map history to heights array so that most recent is at far end
+  let ptr = 0;
+  for(let d=0; d<depth; d++){
+    const src = history[(historyPtr + d)%depth];
+    for(let i=0;i<segments;i++){
+      heights[ptr++] = src[i];
+    }
+  }
+  gl.bindBuffer(gl.ARRAY_BUFFER, heightBuffer);
+  gl.bufferSubData(gl.ARRAY_BUFFER, 0, heights);
+}
+
+// Projection/view
+function createProjection(aspect){
+  const fov = Math.PI/4;
+  const near = 0.1; const far = 100.0;
+  const f = 1.0/Math.tan(fov/2);
+  const proj = new Float32Array(16);
+  proj[0] = f/aspect; proj[1]=0;proj[2]=0;proj[3]=0;
+  proj[4]=0;proj[5]=f;proj[6]=0;proj[7]=0;
+  proj[8]=0;proj[9]=0;proj[10]=(far+near)/(near-far);proj[11]=-1;
+  proj[12]=0;proj[13]=0;proj[14]=(2*far*near)/(near-far);proj[15]=0;
+  return proj;
+}
+
+function createView(){
+  // simple camera: translate back and rotate slightly
+  const view = new Float32Array(16);
+  // identity
+  for(let i=0;i<16;i++) view[i]=0; view[0]=1; view[5]=1; view[10]=1; view[15]=1;
+  // translate z
+  view[14] = -4.2; // move camera back
+  // rotate X by -15deg: apply rotation
+  const a = -0.35; const c=Math.cos(a), s=Math.sin(a);
+  // multiply rotationX into view
+  view[5]=c; view[6]=s; view[9]=-s; view[10]=c;
+  return view;
+}
+
+// draw loop
+let lastTime = performance.now();
+function render(){
+  requestAnimationFrame(render);
+  const now = performance.now();
+  const dt = (now-lastTime)/1000; lastTime=now;
+
+  if(analyser){
+    analyser.getByteFrequencyData(freqData);
+    analyser.getByteTimeDomainData(timeData);
+    pushToHistory(freqData);
+    updateHeights();
+  } else {
+    // push gentle empty data
+    const dummy = new Uint8Array(segments);
+    for(let i=0;i<segments;i++) dummy[i]=128 + Math.floor(40*Math.sin(i*0.12 + now*0.002));
+    pushToHistory(dummy);
+    updateHeights();
+  }
+
+  gl.viewport(0,0,W,H);
+  gl.clearColor(0.02,0.02,0.03,1.0);
+  gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+  gl.useProgram(prog);
+  // attributes
+  gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+  gl.enableVertexAttribArray(attribPos);
+  gl.vertexAttribPointer(attribPos, 3, gl.FLOAT, false, 0, 0);
+
+  gl.bindBuffer(gl.ARRAY_BUFFER, heightBuffer);
+  gl.enableVertexAttribArray(attribHeight);
+  gl.vertexAttribPointer(attribHeight, 1, gl.FLOAT, false, 0, 0);
+
+  // matrices
+  const proj = createProjection(W/H);
+  const view = createView();
+  gl.uniformMatrix4fv(uniProj, false, proj);
+  gl.uniformMatrix4fv(uniView, false, view);
+
+  const amp = parseFloat(sensInput.value);
+  gl.uniform1f(uniAmp, amp);
+  gl.uniform1f(uniTime, now*0.001);
+  gl.uniform1i(uniGlow, toggleGlow.checked?1:0);
+
+  // draw each strip as line strip -> use TRIANGLE_STRIP to give thickness? We'll draw GL.LINE_STRIP per strip
+  // For better performance, draw using drawArrays with offset per strip
+  for(let d=0; d<depth; d++){
+    const offset = d*segments;
+    gl.lineWidth(1.5);
+    gl.drawArrays(gl.LINE_STRIP, offset, segments);
+  }
+
+  // 2D-like bars: draw using WebGL points as rectangles (simple approach)
+  if(toggleBars.checked && analyser){
+    // draw simple bars on top using 2D canvas overlay via compositing? Instead we'll draw using DOM 2D on a hidden canvas
+    // For simplicity, draw overlay using WebGL blending: draw points scaled vertically via gl.POINTS
+    // We'll implement a very simple bar visualization with gl.POINTS
+    // Create temporary program for bars
+  }
+}
+
+render();
+
+// simple bars overlay using 2D canvas on top of GL
+const overlayCanvas = document.createElement('canvas');
+overlayCanvas.style.position='fixed'; overlayCanvas.style.inset='0'; overlayCanvas.style.pointerEvents='none'; document.body.appendChild(overlayCanvas);
+const octx = overlayCanvas.getContext('2d');
+function resizeOverlay(){ overlayCanvas.width = innerWidth; overlayCanvas.height = innerHeight; }
+window.addEventListener('resize', resizeOverlay); resizeOverlay();
+
+function drawBars2D(){
+  octx.clearRect(0,0,overlayCanvas.width,overlayCanvas.height);
+  if(!analyser || !toggleBars.checked) return;
+  analyser.getByteFrequencyData(freqData);
+  const bins = Math.min(128, freqData.length);
+  const bw = overlayCanvas.width / bins;
+  for(let i=0;i<bins;i++){
+    const v = freqData[i]/255;
+    const h = v * overlayCanvas.height * 0.45;
+    const x = i * bw;
+    const grd = octx.createLinearGradient(x, overlayCanvas.height-h, x, overlayCanvas.height);
+    const hue1 = 200 + i*(120/bins);
+    const hue2 = 260 - i*(80/bins);
+    grd.addColorStop(0, `hsl(${hue1},100%,60%)`);
+    grd.addColorStop(1, `hsl(${hue2},80%,40%)`);
+    octx.fillStyle = grd;
+    octx.fillRect(x+2, overlayCanvas.height - h, bw-4, h);
+  }
+}
+
+setInterval(drawBars2D, 40);
+
+// drag to load also handled; add keyboard: space to toggle play/pause
+window.addEventListener('keydown', (e)=>{
+  if(e.code==='Space'){
+    if(audioElement){ if(audioElement.paused) audioElement.play(); else audioElement.pause(); }
+  }
+});
+
+// allow dropping a file onto page handled earlier
+
+console.log('Visualizer loaded');
+</script>
+</body>
+</html>

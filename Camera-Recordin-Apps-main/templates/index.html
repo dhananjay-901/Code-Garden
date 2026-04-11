@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html>
+<head><title>Webcam</title></head>
+<body>
+<h1>Web Camera</h1>
+<video id="video" autoplay playsinline width="640" height="480"></video><br>
+<button id="snap">Capture & Upload</button>
+<canvas id="canvas" width="640" height="480" hidden></canvas>
+<div id="status"></div>
+
+<script>
+navigator.mediaDevices.getUserMedia({video:true}).then(stream =>{
+    video.srcObject = stream;
+});
+
+snap.onclick = async () => {
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(video, 0, 0);
+    const data = canvas.toDataURL('image/jpeg');
+
+    const res = await fetch('/upload',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({image:data})});
+    const j = await res.json();
+    status.textContent = j.ok ? 'Saved: '+j.file : 'Failed';
+};
+</script>
+</body>
+</html>

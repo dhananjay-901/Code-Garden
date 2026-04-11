@@ -1,0 +1,342 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>3D Waveform Visualizer</title>
+
+    <style>
+        html,
+        body {
+            margin: 0;
+            height: 100%;
+            background: #05060a;
+            color: #fff;
+            font-family: system-ui, Inter, Arial;
+            overflow: hidden;
+        }
+
+        #three-container {
+            position: fixed;
+            inset: 0
+        }
+
+        #ui {
+            position: fixed;
+            right: 18px;
+            top: 18px;
+            background: rgba(0, 0, 0, .45);
+            backdrop-filter: blur(6px);
+            padding: 12px;
+            border-radius: 10px;
+            z-index: 10;
+            min-width: 260px;
+        }
+
+        .row {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 8px
+        }
+
+        button,
+        input {
+            color: #fff
+        }
+
+        button {
+            padding: 8px 10px;
+            border-radius: 8px;
+            background: rgba(255, 255, 255, .05);
+            border: 1px solid rgba(255, 255, 255, .08);
+            cursor: pointer;
+        }
+
+        #overlay {
+            position: fixed;
+            left: 18px;
+            bottom: 18px;
+            font-size: 13px;
+            color: #ccc;
+            z-index: 10;
+        }
+
+        #barCanvas {
+            position: fixed;
+            inset: 0;
+            pointer-events: none;
+            z-index: 5;
+        }
+    </style>
+</head>
+
+<body>
+
+    <div id="three-container"></div>
+
+    <div id="ui">
+        <div style="font-weight:600;margin-bottom:6px">Controls</div>
+        <div class="row">
+            <input id="fileInput" type="file" accept="audio/*,video/*">
+            <button id="btnMic">Mic</button>
+        </div>
+        <div class="row">
+            <button id="btnPlay" disabled>Play</button>
+            <button id="btnPause" disabled>Pause</button>
+            <button id="btnFS">Fullscreen</button>
+        </div>
+
+        <label>Depth <span id="depthLabel">48</span></label>
+        <input id="depth" type="range" min="8" max="128" value="48">
+
+        <label>Sensitivity <span id="sensLabel">1.0</span></label>
+        <input id="sensitivity" type="range" min="0.2" max="5" step="0.1" value="1">
+
+        <div style="margin-top:6px">
+            <label><input id="bars" type="checkbox" checked> Bars</label>
+        </div>
+    </div>
+
+    <canvas id="barCanvas"></canvas>
+    <div id="overlay">Load a file or enable microphone</div>
+
+    <script src="https://unpkg.com/three@0.150.0/build/three.min.js"></script>
+
+    <script>
+        /* ===============================
+           GLOBALS
+        ================================ */
+        const container = document.getElementById('three-container');
+        const barCanvas = document.getElementById('barCanvas');
+        const bctx = barCanvas.getContext('2d');
+
+        const depthInput = document.getElementById('depth');
+        const sensInput = document.getElementById('sensitivity');
+        const depthLabel = document.getElementById('depthLabel');
+        const sensLabel = document.getElementById('sensLabel');
+        const toggleBars = document.getElementById('bars');
+
+        depthLabel.textContent = depthInput.value;
+        sensLabel.textContent = sensInput.value;
+
+        depthInput.oninput = () => depthLabel.textContent = depthInput.value;
+        sensInput.oninput = () => sensLabel.textContent = sensInput.value;
+
+        let audioCtx, analyser, freqData;
+        let audioEl = null;
+        let sourceNode = null;
+
+        /* ===============================
+           AUDIO
+        ================================ */
+        async function initAudio() {
+            if (audioCtx) return;
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            analyser = audioCtx.createAnalyser();
+            analyser.fftSize = 2048;
+            freqData = new Uint8Array(analyser.frequencyBinCount);
+        }
+
+        async function loadFile(file) {
+            await initAudio();
+            cleanupSource();
+
+            audioEl = new Audio(URL.createObjectURL(file));
+            audioEl.loop = true;
+            audioEl.autoplay = true;
+
+            sourceNode = audioCtx.createMediaElementSource(audioEl);
+            sourceNode.connect(analyser);
+            analyser.connect(audioCtx.destination);
+
+            audioEl.play();
+            btnPlay.disabled = btnPause.disabled = false;
+        }
+
+        async function useMic() {
+            await initAudio();
+            cleanupSource();
+
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            sourceNode = audioCtx.createMediaStreamSource(stream);
+            sourceNode.connect(analyser);
+
+            btnPlay.disabled = btnPause.disabled = true;
+        }
+
+        function cleanupSource() {
+            if (sourceNode) { try { sourceNode.disconnect() } catch { } }
+            if (audioEl) { audioEl.pause(); audioEl = null }
+        }
+
+        /* ===============================
+           THREE.JS
+        ================================ */
+        let scene, camera, renderer, mesh, geometry;
+        let segments = 256;
+        let depth = +depthInput.value;
+        let history = [];
+        let writePtr = 0;
+
+        function initThree() {
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setPixelRatio(devicePixelRatio);
+            renderer.setSize(innerWidth, innerHeight);
+            container.appendChild(renderer.domElement);
+
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x05060a);
+
+            camera = new THREE.PerspectiveCamera(42, innerWidth / innerHeight, 0.1, 100);
+            camera.position.set(0, 1.1, 4);
+            camera.lookAt(0, 0, 0);
+
+            scene.add(new THREE.AmbientLight(0xffffff, 0.8));
+
+            buildMesh();
+        }
+
+        function buildMesh() {
+            depth = +depthInput.value;
+            history = Array.from({ length: depth }, () => new Float32Array(segments));
+            writePtr = 0;
+
+            if (mesh) {
+                scene.remove(mesh);
+                geometry.dispose();
+            }
+
+            geometry = new THREE.BufferGeometry();
+            const pos = new Float32Array(depth * segments * 3);
+            const col = new Float32Array(depth * segments * 3);
+            const idx = [];
+
+            let p = 0;
+            for (let z = 0; z < depth; z++) {
+                for (let i = 0; i < segments; i++) {
+                    pos[p++] = (i / (segments - 1) - 0.5) * 3.2;
+                    pos[p++] = 0;
+                    pos[p++] = -z * 0.04;
+                }
+            }
+
+            for (let z = 0; z < depth; z++) {
+                const r = z * segments;
+                for (let i = 0; i < segments - 1; i++) {
+                    idx.push(r + i, r + i + 1);
+                }
+            }
+
+            geometry.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+            geometry.setAttribute('color', new THREE.BufferAttribute(col, 3));
+            geometry.setIndex(idx);
+
+            mesh = new THREE.LineSegments(
+                geometry,
+                new THREE.LineBasicMaterial({ vertexColors: true })
+            );
+            mesh.rotation.x = -0.18;
+            scene.add(mesh);
+        }
+
+        /* ===============================
+           UPDATE
+        ================================ */
+        function pushAudio() {
+            analyser.getByteFrequencyData(freqData);
+            const row = history[writePtr];
+            const step = Math.floor(freqData.length / segments);
+            for (let i = 0; i < segments; i++) {
+                row[i] = freqData[i * step] / 255;
+            }
+            writePtr = (writePtr + 1) % depth;
+        }
+
+        function updateMesh() {
+            const pos = geometry.attributes.position.array;
+            const col = geometry.attributes.color.array;
+            let p = 0, c = 0;
+            const amp = +sensInput.value;
+
+            for (let z = 0; z < depth; z++) {
+                const src = history[(writePtr - 1 - z + depth) % depth];
+                for (let i = 0; i < segments; i++) {
+                    const v = src[i];
+                    pos[p + 1] = (v - 0.5) * amp * 1.5;
+                    const [r, g, b] = hsv(0.55 + v * 0.3, 0.9, 0.85);
+                    col[c] = r; col[c + 1] = g; col[c + 2] = b;
+                    p += 3; c += 3;
+                }
+            }
+
+            geometry.attributes.position.needsUpdate = true;
+            geometry.attributes.color.needsUpdate = true;
+        }
+
+        /* ===============================
+           2D BARS
+        ================================ */
+        function drawBars() {
+            if (!toggleBars.checked) return;
+            bctx.clearRect(0, 0, barCanvas.width, barCanvas.height);
+            const bins = 128, w = barCanvas.width / bins;
+            for (let i = 0; i < bins; i++) {
+                const v = freqData[i] / 255;
+                bctx.fillStyle = `hsl(${200 + i},90%,60%)`;
+                bctx.fillRect(i * w, barCanvas.height, w - 2, -v * barCanvas.height * 0.4);
+            }
+        }
+
+        /* ===============================
+           LOOP
+        ================================ */
+        function animate() {
+            requestAnimationFrame(animate);
+            if (analyser) {
+                pushAudio();
+                updateMesh();
+                drawBars();
+            }
+            renderer.render(scene, camera);
+        }
+
+        /* ===============================
+           UTIL
+        ================================ */
+        function hsv(h, s, v) {
+            let f = (n, k = (n + h * 6) % 6) => v - v * s * Math.max(Math.min(k, 4 - k, 1), 0);
+            return [f(5), f(3), f(1)];
+        }
+
+        function resize() {
+            renderer.setSize(innerWidth, innerHeight);
+            camera.aspect = innerWidth / innerHeight;
+            camera.updateProjectionMatrix();
+            barCanvas.width = innerWidth;
+            barCanvas.height = innerHeight;
+        }
+
+        /* ===============================
+           EVENTS
+        ================================ */
+        window.onresize = resize;
+
+        fileInput.onchange = e => loadFile(e.target.files[0]);
+        btnMic.onclick = useMic;
+        btnPlay.onclick = () => audioEl && audioEl.play();
+        btnPause.onclick = () => audioEl && audioEl.pause();
+        btnFS.onclick = () => document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen();
+        depthInput.oninput = buildMesh;
+
+        /* ===============================
+           START
+        ================================ */
+        initThree();
+        resize();
+        animate();
+    </script>
+
+</body>
+
+</html>

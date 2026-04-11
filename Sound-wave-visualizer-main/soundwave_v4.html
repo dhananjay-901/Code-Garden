@@ -1,0 +1,417 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>3D Waveform Visualizer — File & Mic</title>
+<style>
+  :root{--panel-bg:rgba(0,0,0,0.45)}
+  html,body{height:100%;margin:0;background:#05060a;font-family:Inter,system-ui,Arial;color:#fff;overflow:hidden}
+  #three-container{position:fixed;inset:0}
+  #ui{position:fixed;right:18px;top:18px;z-index:60;padding:12px;border-radius:10px;background:var(--panel-bg);backdrop-filter:blur(6px);min-width:260px}
+  .row{display:flex;gap:8px;align-items:center;margin-bottom:8px}
+  label{font-size:13px}
+  input[type=file]{color:#fff}
+  button{padding:8px 10px;border-radius:8px;border:1px solid rgba(255,255,255,0.06);background:rgba(255,255,255,0.03);cursor:pointer;color:#fff}
+  #overlay{position:fixed;left:18px;bottom:18px;color:rgba(255,255,255,0.75);font-size:13px;z-index:60}
+  #barCanvas{position:fixed;left:0;top:0;pointer-events:none;z-index:55}
+  .small{font-size:12px;color:#ddd}
+</style>
+</head>
+<body>
+
+<div id="three-container"></div>
+
+<div id="ui">
+  <div style="font-weight:600;margin-bottom:6px">Visualizer Controls</div>
+  <div class="row">
+    <input id="fileInput" type="file" accept="audio/*,video/*" />
+    <button id="btnMic">Use Microphone</button>
+  </div>
+  <div class="row">
+    <button id="btnPlay" disabled>Play</button>
+    <button id="btnPause" disabled>Pause</button>
+    <button id="btnFS">Fullscreen</button>
+  </div>
+  <div style="margin-top:6px">
+    <label>Depth: <span id="depthLabel">48</span></label>
+    <input id="depth" type="range" min="8" max="128" value="48" />
+  </div>
+  <div style="margin-top:6px">
+    <label>Sensitivity: <span id="sensLabel">1.0</span></label>
+    <input id="sensitivity" type="range" min="0.2" max="5.0" step="0.1" value="1.0" />
+  </div>
+  <div style="margin-top:6px">
+    <label>Bars: <input id="toggleBars" type="checkbox" checked /></label>
+    <label style="margin-left:8px">Glow: <input id="toggleGlow" type="checkbox" checked /></label>
+  </div>
+  <div class="small" style="margin-top:8px">Tip: Drag & drop an audio/video file onto the page.</div>
+</div>
+
+<canvas id="barCanvas"></canvas>
+<div id="overlay">Ready — load a file or click "Use Microphone". Press Space to toggle play/pause.</div>
+
+<!-- Three.js from CDN (works on local server) -->
+<script src="https://unpkg.com/three@0.150.0/build/three.min.js"></script>
+
+<script>
+/* ------------------------------
+   Setup variables & UI elements
+   ------------------------------ */
+const container = document.getElementById('three-container');
+const fileInput = document.getElementById('fileInput');
+const btnMic = document.getElementById('btnMic');
+const btnPlay = document.getElementById('btnPlay');
+const btnPause = document.getElementById('btnPause');
+const btnFS = document.getElementById('btnFS');
+const depthInput = document.getElementById('depth');
+const depthLabel = document.getElementById('depthLabel');
+const sensInput = document.getElementById('sensitivity');
+const sensLabel = document.getElementById('sensLabel');
+const toggleBars = document.getElementById('toggleBars');
+const toggleGlow = document.getElementById('toggleGlow');
+const barCanvas = document.getElementById('barCanvas');
+const octx = barCanvas.getContext('2d');
+
+depthInput.oninput = ()=> depthLabel.textContent = depthInput.value;
+sensInput.oninput = ()=> sensLabel.textContent = Number(sensInput.value).toFixed(1);
+btnFS.onclick = ()=> { if(!document.fullscreenElement) document.documentElement.requestFullscreen(); else document.exitFullscreen(); }
+
+window.addEventListener('resize', resizeAll);
+
+/* ------------------------------
+   Web Audio setup (lazy)
+   ------------------------------ */
+let audioCtx = null;
+let analyser = null;
+let freqData = null;
+let timeData = null;
+let sourceNode = null;
+let audioElement = null;
+let usingMic = false;
+
+async function ensureAudio(){
+  if(audioCtx) return;
+  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  if(audioCtx.state === 'suspended') await audioCtx.resume();
+}
+
+function setupAnalyser(fftSize=2048){
+  if(!audioCtx) return;
+  analyser = audioCtx.createAnalyser();
+  analyser.fftSize = fftSize;
+  freqData = new Uint8Array(analyser.frequencyBinCount);
+  timeData = new Uint8Array(analyser.fftSize);
+}
+
+/* ------------------------------
+   File loading & mic handling
+   ------------------------------ */
+fileInput.addEventListener('change', async e=>{
+  const f = e.target.files && e.target.files[0];
+  if(!f) return;
+  await loadFile(f);
+});
+
+window.addEventListener('dragover', e=> e.preventDefault());
+window.addEventListener('drop', async e=> {
+  e.preventDefault();
+  if(e.dataTransfer.files && e.dataTransfer.files[0]) await loadFile(e.dataTransfer.files[0]);
+});
+
+async function loadFile(file){
+  await ensureAudio();
+  usingMic = false;
+
+  // stop previous
+  if(audioElement){ audioElement.pause(); audioElement.src = ''; audioElement = null; }
+  if(sourceNode){ try{ sourceNode.disconnect(); }catch(e){} sourceNode=null; }
+
+  audioElement = document.createElement('audio');
+  audioElement.src = URL.createObjectURL(file);
+  audioElement.crossOrigin = 'anonymous';
+  audioElement.loop = false;
+  audioElement.autoplay = true;
+
+  sourceNode = audioCtx.createMediaElementSource(audioElement);
+  setupAnalyser();
+  sourceNode.connect(analyser);
+  analyser.connect(audioCtx.destination);
+
+  btnPlay.disabled = false; btnPause.disabled = false;
+  audioElement.play().catch(()=>{ /* some browsers require gesture */ });
+}
+
+btnPlay.onclick = ()=> { if(audioElement) audioElement.play(); }
+btnPause.onclick = ()=> { if(audioElement) audioElement.pause(); }
+
+btnMic.onclick = async ()=>{
+  await ensureAudio();
+  try{
+    const s = await navigator.mediaDevices.getUserMedia({audio:true});
+    usingMic = true;
+    if(sourceNode){ try{ sourceNode.disconnect(); }catch(e){} sourceNode=null; }
+    sourceNode = audioCtx.createMediaStreamSource(s);
+    setupAnalyser();
+    sourceNode.connect(analyser);
+    // do not connect analyser to destination (mic monitoring) to avoid echo
+    btnPlay.disabled = true; btnPause.disabled = true;
+  }catch(err){
+    alert('Microphone permission required.');
+    console.error(err);
+  }
+};
+
+/* ------------------------------
+   Three.js 3D waveform setup
+   ------------------------------ */
+let scene, camera, renderer, mesh;
+let geometry, material;
+let segments = 256;               // x axis resolution
+let depth = parseInt(depthInput.value,10); // history depth (z axis)
+let history = [];
+let historyPtr = 0;
+
+function initThree(){
+  // renderer
+  renderer = new THREE.WebGLRenderer({antialias:true, alpha:false});
+  renderer.setPixelRatio(window.devicePixelRatio || 1);
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  container.innerHTML = '';
+  container.appendChild(renderer.domElement);
+
+  // scene + camera
+  scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x05060a);
+
+  const aspect = window.innerWidth / window.innerHeight;
+  camera = new THREE.PerspectiveCamera(42, aspect, 0.1, 1000);
+  camera.position.set(0, 1.0, 4.0);   // pulled back so waveform is centered
+  camera.lookAt(0, 0, 0);
+
+  // light (soft)
+  const ambient = new THREE.AmbientLight(0xffffff, 0.8);
+  scene.add(ambient);
+
+  // geometry: plane-like grid, width across X, depth along Z
+  buildMesh();
+}
+
+function buildMesh(){
+  // recreate geometry according to depth and segments
+  depth = parseInt(depthInput.value,10);
+  segments = 256;
+
+  // reset history arrays
+  history = new Array(depth);
+  for(let i=0;i<depth;i++) history[i] = new Float32Array(segments);
+  historyPtr = 0;
+
+  if(mesh) { scene.remove(mesh); geometry.dispose(); material.dispose(); }
+
+  // BufferGeometry with (depth * segments) vertices arranged as rows
+  geometry = new THREE.BufferGeometry();
+  const vertexCount = depth * segments;
+  const positions = new Float32Array(vertexCount * 3);
+  const colors = new Float32Array(vertexCount * 3);
+
+  // populate positions X,Z; Y will be audio-driven
+  let p = 0;
+  for(let z=0; z<depth; z++){
+    const zPos = (z/(depth-1) - 0.5) * -2.0; // negative so newest near camera
+    for(let i=0;i<segments;i++){
+      const x = (i/(segments-1) - 0.5) * 3.2; // wide X
+      positions[p++] = x;    // x
+      positions[p++] = 0.0;  // y (updated)
+      positions[p++] = zPos; // z
+    }
+  }
+
+  // index buffer to render rows as line strips
+  const indices = [];
+  for(let z=0; z<depth; z++){
+    const rowStart = z * segments;
+    for(let i=0;i<segments-1;i++){
+      indices.push(rowStart + i, rowStart + i + 1);
+    }
+  }
+
+  geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+  geometry.setIndex(indices);
+
+  // material (vertex colors)
+  material = new THREE.LineBasicMaterial({vertexColors: true, linewidth: 1.4});
+  mesh = new THREE.LineSegments(geometry, material);
+  // rotate slightly to frame center
+  mesh.rotation.x = -0.18;
+  scene.add(mesh);
+}
+
+/* ------------------------------
+   Update history & geometry
+   ------------------------------ */
+function pushFreqToHistory(freqArray){
+  // fill history[historyPtr] with mapped values sized to segments
+  const step = Math.max(1, Math.floor(freqArray.length / segments));
+  const row = history[historyPtr];
+  for(let i=0;i<segments;i++){
+    const idx = Math.min(freqArray.length - 1, Math.floor(i * step));
+    row[i] = freqArray[idx] / 255; // 0..1
+  }
+  historyPtr = (historyPtr + 1) % depth;
+}
+
+function updateMeshFromHistory(){
+  if(!geometry) return;
+  const posAttr = geometry.getAttribute('position');
+  const colAttr = geometry.getAttribute('color');
+  const positions = posAttr.array;
+  const colors = colAttr.array;
+  let p = 0, c = 0;
+  // map history into positions' Y coordinate; newest history rows at lower z (near camera)
+  for(let z=0; z<depth; z++){
+    const src = history[(historyPtr + z) % depth]; // older -> farther
+    for(let i=0;i<segments;i++){
+      const val = src[i] || 0;
+      const amp = parseFloat(sensInput.value);
+      const y = (val - 0.5) * amp * 1.5; // center around 0
+      positions[p+1] = y; // y component
+      // color map based on val
+      const hue = 200 + val * 120;
+      const col = hsvToRgb(hue/360, 0.9, 0.8);
+      colors[c] = col[0]; colors[c+1] = col[1]; colors[c+2] = col[2];
+      p += 3; c += 3;
+    }
+  }
+  posAttr.needsUpdate = true;
+  colAttr.needsUpdate = true;
+}
+
+/* HSV to RGB utility (0..1 outputs) */
+function hsvToRgb(h, s, v){
+  let r=0,g=0,b=0;
+  const i = Math.floor(h*6);
+  const f = h*6 - i;
+  const p = v*(1-s);
+  const q = v*(1-f*s);
+  const t = v*(1-(1-f)*s);
+  switch(i%6){
+    case 0: r=v; g=t; b=p; break;
+    case 1: r=q; g=v; b=p; break;
+    case 2: r=p; g=v; b=t; break;
+    case 3: r=p; g=q; b=v; break;
+    case 4: r=t; g=p; b=v; break;
+    case 5: r=v; g=p; b=q; break;
+  }
+  return [r,g,b];
+}
+
+/* ------------------------------
+   2D Bars overlay
+   ------------------------------ */
+function resizeAll(){
+  const w = window.innerWidth, h = window.innerHeight;
+  renderer && renderer.setSize(w,h);
+  camera && (camera.aspect = w/h, camera.updateProjectionMatrix());
+  barCanvas.width = w; barCanvas.height = h;
+}
+
+function drawBars2D(){
+  octx.clearRect(0,0,barCanvas.width,barCanvas.height);
+  if(!analyser || !toggleBars.checked) return;
+  analyser.getByteFrequencyData(freqData);
+  const bins = Math.min(128, freqData.length);
+  const bw = barCanvas.width / bins;
+  for(let i=0;i<bins;i++){
+    const v = freqData[i] / 255;
+    const h = v * barCanvas.height * 0.45;
+    const x = i * bw;
+    const hue1 = 200 + i*(120/bins);
+    const hue2 = 260 - i*(80/bins);
+    const grd = octx.createLinearGradient(x, barCanvas.height-h, x, barCanvas.height);
+    grd.addColorStop(0, `hsl(${hue1},100%,60%)`);
+    grd.addColorStop(1, `hsl(${hue2},80%,40%)`);
+    octx.fillStyle = grd;
+    octx.fillRect(x+2, barCanvas.height - h, bw-4, h);
+  }
+}
+
+/* ------------------------------
+   Animation loop
+   ------------------------------ */
+let lastTime = performance.now();
+function animate(){
+  requestAnimationFrame(animate);
+  const now = performance.now();
+  const dt = (now - lastTime)/1000; lastTime = now;
+
+  // pull audio data and update history
+  if(analyser){
+    analyser.getByteFrequencyData(freqData);
+    pushFreqToHistory(freqData);
+  } else {
+    // gentle idle pattern
+    const dummy = new Uint8Array(segments);
+    for(let i=0;i<segments;i++) dummy[i] = 100 + 50*Math.abs(Math.sin(i*0.12 + now*0.002));
+    pushFreqToHistory(dummy);
+  }
+
+  updateMeshFromHistory();
+
+  // render
+  renderer.render(scene, camera);
+
+  // draw 2D bars overlay at slower interval
+  drawBars2D();
+}
+
+/* ------------------------------
+   Init + start
+   ------------------------------ */
+initThree();
+buildMesh();
+resizeAll();
+animate();
+
+/* ------------------------------
+   Hook analyser link when audio source connects
+   ------------------------------ */
+function attachAnalyserToSource(node){
+  // node: AudioNode (MediaElementSource or MediaStreamSource)
+  if(!audioCtx) return;
+  if(analyser) { try{ analyser.disconnect(); }catch(e){} }
+  setupAnalyser();
+  node.connect(analyser);
+  // for file playback also connect to destination so sound plays
+  if(!usingMic && audioElement) analyser.connect(audioCtx.destination);
+}
+
+/* intercept creation of sourceNode to attach analyser */
+const origLoadFile = loadFile;
+loadFile = async function(file){
+  await origLoadFile(file);
+  if(sourceNode) attachAnalyserToSource(sourceNode);
+}
+
+/* after mic starts, attach */
+const origBtnMic = btnMic.onclick;
+btnMic.onclick = async function(){ await ensureAudio(); await origBtnMic && origBtnMic(); if(sourceNode) attachAnalyserToSource(sourceNode); };
+
+/* After user loads a file via fileInput directly, ensure analyser attached */
+fileInput.addEventListener('change', ()=>{ if(sourceNode) attachAnalyserToSource(sourceNode); });
+
+/* Toggle depth changes */
+depthInput.addEventListener('input', ()=>{ buildMesh(); });
+
+/* Keyboard: space toggles audioElement playback */
+window.addEventListener('keydown', (e)=>{
+  if(e.code === 'Space'){ e.preventDefault(); if(audioElement){ if(audioElement.paused) audioElement.play(); else audioElement.pause(); } }
+});
+
+/* Log */
+console.log('3D Waveform Visualizer ready (local server recommended).');
+
+</script>
+</body>
+</html>

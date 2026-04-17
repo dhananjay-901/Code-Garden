@@ -1,15 +1,11 @@
 #include <bits/stdc++.h>
 using namespace std;
-
-// ---------------- CONFIG ----------------
 struct Config {
     vector<string> files;
     int topK = 5;
     string indexFile = "index.db";
     int cacheSize = 5;
 };
-
-// ---------------- LRU CACHE ----------------
 template<typename K, typename V>
 class LRUCache {
     int cap;
@@ -45,8 +41,6 @@ public:
         }
     }
 };
-
-// ---------------- TOKENIZER ----------------
 class Tokenizer {
     unordered_set<string> stopWords = {
         "the","is","and","a","an","of","to","in","on","for"
@@ -71,8 +65,6 @@ public:
         return words;
     }
 };
-
-// ---------------- DOCUMENT STORE ----------------
 class DocumentStore {
     unordered_map<string,string> contents;
 
@@ -94,8 +86,6 @@ public:
     const string& get(const string& f) const { return contents.at(f); }
     int size() const { return contents.size(); }
 };
-
-// ---------------- INDEXER ----------------
 class Indexer {
     unordered_map<string, unordered_map<string,int>> indexMap;
 
@@ -139,8 +129,6 @@ public:
 
     const auto& get() const { return indexMap; }
 };
-
-// ---------------- RANKER ----------------
 class Ranker {
 public:
     unordered_map<string,double> score(
@@ -180,7 +168,6 @@ public:
     }
 };
 
-// ---------------- SNIPPET ----------------
 class Snippet {
 public:
     string generate(const string& content, const string& q, Tokenizer& tok) {
@@ -211,8 +198,6 @@ public:
         return "..." + snip + "...";
     }
 };
-
-// ---------------- ENGINE ----------------
 class SearchEngine {
     Config cfg;
     DocumentStore store;
@@ -265,8 +250,6 @@ private:
         }
     }
 };
-
-// ---------------- MAIN ----------------
 int main() {
     Config cfg;
     cfg.files = {

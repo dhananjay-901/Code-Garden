@@ -10,7 +10,6 @@ private:
     };
     int totalDocs = 0;
 
-    // ---------------- TOKENIZE ----------------
     vector<string> tokenize(const string& text) {
         vector<string> words;
         string word;
@@ -33,7 +32,6 @@ private:
         return words;
     }
 
-    // ---------------- FILE READER ----------------
     string readFile(const string& filename) {
         ifstream file(filename);
         stringstream buffer;
@@ -41,7 +39,6 @@ private:
         return buffer.str();
     }
 
-    // ---------------- INDEX ONE FILE ----------------
     void indexDocument(const string& filename, const string& content) {
         auto words = tokenize(content);
         for (auto& word : words) {
@@ -49,7 +46,6 @@ private:
         }
     }
 
-    // ---------------- SNIPPET ----------------
     string getSnippet(const string& content, const string& query) {
         string lowerContent = content;
         transform(lowerContent.begin(), lowerContent.end(), lowerContent.begin(), ::tolower);
@@ -81,7 +77,6 @@ private:
     }
 
 public:
-    // ---------------- BUILD INDEX ----------------
     void indexFiles(const vector<string>& files) {
         totalDocs = files.size();
 
@@ -92,7 +87,6 @@ public:
         }
     }
 
-    // ---------------- SEARCH ----------------
     vector<pair<string, double>> search(const string& query) {
         unordered_map<string, double> scores;
         auto queryWords = tokenize(query);
@@ -116,7 +110,6 @@ public:
         return results;
     }
 
-    // ---------------- DISPLAY ----------------
     void displayResults(const vector<pair<string, double>>& results, const string& query) {
         if (results.empty()) {
             cout << "No results found.\n";
@@ -132,8 +125,6 @@ public:
     }
 };
 
-
-// ---------------- MAIN ----------------
 int main() {
     SearchEngine engine;
 

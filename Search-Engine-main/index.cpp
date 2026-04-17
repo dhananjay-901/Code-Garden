@@ -10,7 +10,6 @@ unordered_map<string, unordered_map<string, int>> indexMap;
 unordered_set<string> stopWords = {"the", "is", "and", "a",  "an",
                                    "of",  "to", "in",  "on", "for"};
 
-// ---------------- FILE READING ----------------
 string readFile(const string &filename) {
   ifstream file(filename);
 
@@ -23,8 +22,6 @@ string readFile(const string &filename) {
   buffer << file.rdbuf();
   return buffer.str();
 }
-
-// ---------------- TOKENIZATION ----------------
 vector<string> tokenize(const string &text) {
   vector<string> words;
   string word;
@@ -49,7 +46,6 @@ vector<string> tokenize(const string &text) {
   return words;
 }
 
-// ---------------- INDEXING ----------------
 void indexDocument(const string &filename, const string &content) {
   vector<string> words = tokenize(content);
 
@@ -58,7 +54,6 @@ void indexDocument(const string &filename, const string &content) {
   }
 }
 
-// ---------------- SEARCH ----------------
 vector<pair<string, double>> search(const string &query) {
   unordered_map<string, double> scores;
 
@@ -71,7 +66,7 @@ vector<pair<string, double>> search(const string &query) {
       double idf = log((double)totalDocs / df);
 
       for (auto &[file, tf] : indexMap[word]) {
-        scores[file] += tf * idf; // 🔥 TF-IDF
+        scores[file] += tf * idf;
       }
     }
   }
@@ -84,7 +79,6 @@ vector<pair<string, double>> search(const string &query) {
   return results;
 }
 
-// ---------------- MAIN ----------------
 int main() {
   cout << "Mini Search Engine (with Stop Words)\n";
   vector<string> files = {"docs/file1.txt", "docs/file2.txt", "docs/file3.txt"};

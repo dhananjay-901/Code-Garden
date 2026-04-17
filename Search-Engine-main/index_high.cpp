@@ -28,8 +28,6 @@ string getSnippet(const string& content, const string& query) {
 
     return "..." + content.substr(start, end - start) + "...";
 }
-
-// ---------------- FILE READING ----------------
 string readFile(const string &filename) {
   ifstream file(filename);
 
@@ -43,7 +41,6 @@ string readFile(const string &filename) {
   return buffer.str();
 }
 
-// ---------------- TOKENIZATION ----------------
 vector<string> tokenize(const string &text) {
   vector<string> words;
   string word;
@@ -68,7 +65,6 @@ vector<string> tokenize(const string &text) {
   return words;
 }
 
-// ---------------- INDEXING ----------------
 void indexDocument(const string &filename, const string &content) {
   vector<string> words = tokenize(content);
 
@@ -77,7 +73,6 @@ void indexDocument(const string &filename, const string &content) {
   }
 }
 
-// ---------------- SEARCH ----------------
 vector<pair<string, double>> search(const string &query) {
   unordered_map<string, double> scores;
 
@@ -90,7 +85,7 @@ vector<pair<string, double>> search(const string &query) {
       double idf = log((double)totalDocs / df);
 
       for (auto &[file, tf] : indexMap[word]) {
-        scores[file] += tf * idf; // 🔥 TF-IDF
+        scores[file] += tf * idf;
       }
     }
   }
@@ -103,7 +98,6 @@ vector<pair<string, double>> search(const string &query) {
   return results;
 }
 
-// ---------------- MAIN ----------------
 int main() {
   cout << "Mini Search Engine (with Stop Words)\n";
   vector<string> files = {"docs/file1.txt", "docs/file2.txt", "docs/file3.txt"};
@@ -116,7 +110,7 @@ int main() {
 
   for (const string &file : files) {
     string content = readFile(file);
-    fileContents[file] = content;   // 🔥 store full text
+    fileContents[file] = content;  
     indexDocument(file, content);
 }
 

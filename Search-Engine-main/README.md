@@ -44,7 +44,7 @@ I took my simple search engine and tried to "make it better"...
 4. *13th rebuild*
 5. "I should have stayed with the simple version..."
 
-#### index_high.cpp (its high because i was high on coffee and lack of sleep. because i am better when on lack of sleep)
+#### index_high.cpp - 22/4/26 (its high because i was high on coffee and lack of sleep. because i am better when on lack of sleep)
 I told myself "just one more feature"...
 
 After **countless crashes**, duplicate indexing bugs, lowercase nightmares, and another round of existential crisis, I finally added **snippets** to the search results.
@@ -64,3 +64,23 @@ Yes. I made it *actually useful*.
 3. "WHY IS IT SHOWING GARBAGE?!"
 4. *fixes 47 off-by-one errors*
 5. "Never again."
+
+#### index_high_v1.cpp (built on same night as index_high because i was in seventh cloud after previous build and thought to upgrade it same night biggest mistake)
+I said “okay this is the final version”... and then added **multi-word search + highlighting**.
+
+After fixing **yet another** dozen bugs, broken snippets, and highlight logic that kept eating my strings, I present to you the most "polished" version yet.
+
+### What’s New (The Painful Upgrades)
+- Better **multi-word query** support
+- Improved snippet generation (now searches for any query word)
+- **Highlighting** — matching words wrapped in `[brackets]`
+- Still rocking solid TF-IDF scoring
+- Stop words handled like the pests they are
+
+### The Developer Meltdown
+// 3:17 AM monologue:
+1. "Multi-word should be easy"
+2. *snippet shows garbage*
+3. "Why is it highlighting the wrong word?!"
+4. *fixes highlighting 9 times*
+5. "I regret everything... but it looks cool now."

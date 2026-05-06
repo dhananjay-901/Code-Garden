@@ -57,7 +57,7 @@ Yes. I made it *actually useful*.
 - Smart **snippet preview** — shows context around your search term
 - `getSnippet()` function that almost made me throw my laptop
 
-##### The Developer Experience
+##### The "me" experience
 // Me at 4 AM:
 1. "Adding snippets should be easy"
 2. *code breaks 8 times*
@@ -70,14 +70,14 @@ I said “okay this is the final version”... and then added **multi-word searc
 
 After fixing **yet another** dozen bugs, broken snippets, and highlight logic that kept eating my strings, I present to you the most "polished" version yet.
 
-### What’s New (The Painful Upgrades)
+##### What’s New (The Painful Upgrades)
 - Better **multi-word query** support
 - Improved snippet generation (now searches for any query word)
 - **Highlighting** — matching words wrapped in `[brackets]`
 - Still rocking solid TF-IDF scoring
 - Stop words handled like the pests they are
 
-### The Developer Meltdown
+##### my development experience
 // 3:17 AM monologue:
 1. "Multi-word should be easy"
 2. *snippet shows garbage*

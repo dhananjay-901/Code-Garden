@@ -78,7 +78,7 @@ After fixing **yet another** dozen bugs, broken snippets, and highlight logic th
 - Stop words handled like the pests they are
 
 ##### my development experience
-// 3:17 AM monologue:
+// 6:17 AM monologue:
 1. "Multi-word should be easy"
 2. *snippet shows garbage*
 3. "Why is it highlighting the wrong word?!"

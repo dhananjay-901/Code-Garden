@@ -20,10 +20,10 @@ After fighting with Elasticsearch, Lucene, and 47 dependencies that broke on eve
 - Tokenization that doesn't cry when it sees punctuation
 
 ##### The Reality of Coding
-- Me at 2 AM:
-- "This should be simple"
-- *spends 40 minutes debugging why file paths are wrong*
-- "I hate computers"
+1. Me at 2 AM:
+2. "This should be simple"
+3. *spends 40 minutes debugging why file paths are wrong*
+4. "I hate computers"
 
 #### index.cpp - 19/4/26 - 2 days after that dreadful day 
 I took my simple search engine and tried to "make it better"... 
@@ -59,8 +59,8 @@ Yes. I made it *actually useful*.
 
 ##### The Developer Experience
 // Me at 4 AM:
-"Adding snippets should be easy"
-*code breaks 8 times*
-"WHY IS IT SHOWING GARBAGE?!"
-*fixes 47 off-by-one errors*
-"Never again."
+1. "Adding snippets should be easy"
+2. *code breaks 8 times*
+3. "WHY IS IT SHOWING GARBAGE?!"
+4. *fixes 47 off-by-one errors*
+5. "Never again."
